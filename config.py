@@ -12,8 +12,11 @@ MIRO_BOARD_ID = os.getenv("MIRO_BOARD_ID")
 allowed_users_raw = os.getenv("ALLOWED_USERS", "")
 ALLOWED_USERS = [int(uid.strip()) for uid in allowed_users_raw.split(",") if uid.strip().isdigit()]
 
-# Read base URL from .env or fallback to standard OpenAI URL if not specified
-OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://openai.com")
+# Read base URL from .env or fallback to standard OpenAI URL if None
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL")
+
+# Read model from .env or choose default gpt-5.4-mini
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.4-mini")
 
 if not all([TELEGRAM_TOKEN, OPENAI_API_KEY, MIRO_ACCESS_TOKEN, MIRO_BOARD_ID]):
     raise ValueError("CRITICAL: variables are not defined in .env!")

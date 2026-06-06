@@ -71,7 +71,7 @@ async def handle_user_prompt(message: types.Message):
     
     await message.answer("Thinking...")
     # Process message via LLM, passing current session spatial awareness data
-    ai_response = await ai_agent.process_message(user_text, active_zone=CURRENT_CONTEXT["active_zone"])
+    messages, ai_response = await ai_agent.process_message(user_text, active_zone=CURRENT_CONTEXT["active_zone"])
 
     # If the LLM chooses to chat back with text instead of calling API tools
     if not ai_response.tool_calls:
@@ -80,10 +80,17 @@ async def handle_user_prompt(message: types.Message):
 
     await message.answer(f"Executing {len(ai_response.tool_calls)} action(s)...")
     
+    # Functions results to return to the agent
+    tool_outputs = []
+
+    # Saving response to history 
+    messages.append(ai_response)
+
     # Iterate through batch commands issued by the AI
     for tool_call in ai_response.tool_calls:
         function_name = tool_call.function.name
         arguments = json.loads(tool_call.function.arguments)
+        execution_result = ""
 
         try:
             # === Session Context Focus Management tool execution ===
@@ -145,8 +152,89 @@ async def handle_user_prompt(message: types.Message):
             elif function_name == "copy_zone":
                 result = await miro_client.copy_zone(**arguments)
                 await message.answer(result)
+            elif function_name == "get_board_elements":
+                target_zone_name = arguments.get("zone_name")
+                target_type = arguments.get("element_type")
+                
+                status_msg = "🔍 Reading board: "
+                if target_type: status_msg += f"searching for {target_type}s "
+                if target_zone_name: status_msg += f"inside zone '{target_zone_name}'"
+                await message.answer(status_msg if target_type or target_zone_name else "🔍 Reading elements from the entire Miro board...")
+                
+                # Getting all the board items
+                raw_items = await miro_client.get_all_items()
+                
+                # If the frame is set then scanning it
+                target_frame = None
+                if target_zone_name:
+                    for item in raw_items:
+                        if item.get("type") == "frame" and item.get("data", {}).get("title", "").lower() == target_zone_name.lower():
+                            target_frame = item
+                            break
+                
+                cleaned_items = []
+                
+                if target_zone_name and not target_frame:
+                    execution_result = f"Error: Zone '{target_zone_name}' was not found on the board."
+                else:
+                    # Calculating frame borders
+                    if target_frame:
+                        f_x = target_frame["position"]["x"]
+                        f_y = target_frame["position"]["y"]
+                        f_w = target_frame.get("geometry", {}).get("width", 0) or target_frame.get("size", {}).get("width", 400)
+                        f_h = target_frame.get("geometry", {}).get("height", 0) or target_frame.get("size", {}).get("height", 400)
+                        
+                        left_bound = f_x - (f_w / 2)
+                        right_bound = f_x + (f_w / 2)
+                        top_bound = f_y - (f_h / 2)
+                        bottom_bound = f_y + (f_h / 2)
 
+                    for item in raw_items:
+                        item_type = item.get("type", "unknown")
+                        
+                        # Filter by target type
+                        if target_type:
+                            miro_type_check = "sticky_note" if target_type == "sticker" else target_type
+                            if item_type != miro_type_check:
+                                continue
+
+                        if target_frame and item.get("id") == target_frame.get("id"):
+                            continue
+                            
+                        item_text = item.get("data", {}).get("content", item.get("data", {}).get("title", ""))
+                        pos = item.get("position", {})
+                        i_x = pos.get("x", 0)
+                        i_y = pos.get("y", 0)
+                        
+                        # Filter by target frame
+                        if target_frame:
+                            is_inside = (left_bound <= i_x <= right_bound) and (top_bound <= i_y <= bottom_bound)
+                            if not is_inside:
+                                continue
+                        
+                        cleaned_items.append({
+                            "id": item.get("id"),
+                            "type": item_type,
+                            "text": item_text,
+                            "x": i_x,
+                            "y": i_y
+                        })
+                    
+                    execution_result = json.dumps(cleaned_items, ensure_ascii=False)
         except Exception as e:
             await message.answer(f"Error executing {function_name}: {str(e)}")
 
-    await message.answer("Done!")
+        messages.append({
+            "role": "tool",
+            "tool_call_id": tool_call.id,
+            "name": function_name,
+            "content": execution_result
+        })
+
+    await message.answer("Done! Sending results back to AI...")
+
+    # Sending function execution result to the agent
+    final_response = await ai_agent.get_final_answer(messages)
+    
+    # Answer to the user
+    await message.answer(final_response.content)
