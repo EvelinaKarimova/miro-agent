@@ -3,7 +3,7 @@ import config
 
 class MiroClient:
     def __init__(self):
-        self.base_url = "https://miro.com"
+        self.base_url = "https://api.miro.com/v1"
         self.board_id = config.MIRO_BOARD_ID
         self.headers = {
             "Authorization": f"Bearer {config.MIRO_ACCESS_TOKEN}",
@@ -15,7 +15,7 @@ class MiroClient:
 # Service methods
 # =====================================================================
     async def get_all_items(self) -> list:
-        url = f"{self.base_url}/boards/{self.board_id}/items"
+        url = f"{self.base_url}/boards/{self.board_id}/widgets"
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=self.headers)
             if response.status_code != 200:
@@ -48,7 +48,7 @@ class MiroClient:
         return matched_items
 
     async def _delete_item_by_id(self, item_id: str) -> bool:
-        url = f"{self.base_url}/boards/{self.board_id}/items/{item_id}"
+        url = f"{self.base_url}/boards/{self.board_id}/widgets/{item_id}"
         async with httpx.AsyncClient() as client:
             response = await client.delete(url, headers=self.headers)
             return response.status_code == 204
@@ -57,7 +57,7 @@ class MiroClient:
 # Shapes operations
 # =====================================================================
     async def create_shape(self, text: str, color: str, font_color: str, x: int, y: int, width: int, height: int) -> dict:
-        url = f"{self.base_url}/boards/{self.board_id}/shapes"
+        url = f"{self.base_url}/boards/{self.board_id}/widgets"
         payload = {
             "data": {"content": text, "shape": "rectangle"},
             "style": {"fillColor": color, "borderColor": color, "borderWidth": "2.0"},
@@ -87,7 +87,7 @@ class MiroClient:
         updated_count = 0
         async with httpx.AsyncClient() as client:
             for shape in shapes:
-                url = f"{self.base_url}/boards/{self.board_id}/shapes/{shape['id']}"
+                url = f"{self.base_url}/boards/{self.board_id}/widgets/{shape['id']}"
                 payload = {"data": {}, "style": {}, "position": {}, "geometry": {}}
                 
                 if kwargs.get("new_text") is not None:
@@ -117,7 +117,7 @@ class MiroClient:
 # Sticky notes operations
 # =====================================================================
     async def create_sticker(self, text: str, color: str, x: int, y: int, shape: str) -> dict:
-        url = f"{self.base_url}/boards/{self.board_id}/sticky_notes"
+        url = f"{self.base_url}/boards/{self.board_id}/widgets"
         payload = {
             "data": {"content": text, "shape": shape},
             "style": {"fillColor": color},
@@ -146,7 +146,7 @@ class MiroClient:
         updated_count = 0
         async with httpx.AsyncClient() as client:
             for sticker in stickers:
-                url = f"{self.base_url}/boards/{self.board_id}/sticky_notes/{sticker['id']}"
+                url = f"{self.base_url}/boards/{self.board_id}/widgets/{sticker['id']}"
                 payload = {"data": {}, "style": {}, "position": {}}
                 
                 if kwargs.get("new_text") is not None:
@@ -173,7 +173,7 @@ class MiroClient:
 # Zone\Frame operations
 # =====================================================================
     async def create_zone(self, zone_name: str, x: int, y: int, width: int, height: int) -> dict:
-        url = f"{self.base_url}/boards/{self.board_id}/frames"
+        url = f"{self.base_url}/boards/{self.board_id}/widgets"
         payload = {
             "data": {"title": zone_name},
             "position": {"x": x, "y": y},

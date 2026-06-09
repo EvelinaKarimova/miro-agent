@@ -69,12 +69,13 @@ async def handle_user_prompt(message: types.Message):
 
     user_text = message.text
     
-    await message.answer("Thinking...")
+    thinking_msg = await message.answer("Thinking...")
     # Process message via LLM, passing current session spatial awareness data
     messages, ai_response = await ai_agent.process_message(user_text, active_zone=CURRENT_CONTEXT["active_zone"])
 
     # If the LLM chooses to chat back with text instead of calling API tools
     if not ai_response.tool_calls:
+        await thinking_msg.delete()
         await message.answer(ai_response.content)
         return
 
@@ -90,7 +91,7 @@ async def handle_user_prompt(message: types.Message):
     for tool_call in ai_response.tool_calls:
         function_name = tool_call.function.name
         arguments = json.loads(tool_call.function.arguments)
-        execution_result = ""
+        execution_result = "Success"
 
         try:
             # === Session Context Focus Management tool execution ===
@@ -102,6 +103,7 @@ async def handle_user_prompt(message: types.Message):
                     CURRENT_CONTEXT["active_zone"] = None
                     save_active_zone(None)
                     await message.answer("Active zone reset. Working around center (0,0).")
+                    execution_result = "Active zone cleared successfully."
                 else:
                     # Fetch frames from Miro to resolve physical board coordinates
                     all_items = await miro_client.get_all_items()
@@ -116,42 +118,48 @@ async def handle_user_prompt(message: types.Message):
                             CURRENT_CONTEXT["active_zone"] = zone_data
                             save_active_zone(zone_data)
                             await message.answer(f"Active zone successfully switched to <b>'{item['data']['title']}'</b>.")
+                            execution_result = f"Successfully switched to zone {item['data']['title']}"
                             found = True
                             break
                     if not found:
                         await message.answer(f"AI requested to switch to zone '{target_zone}', but no such frame exists on the Miro board.")
+                        execution_result = f"Error: Zone '{target_zone}' not found on the board."
 
             # === Native Miro Canvas Element Modifications tools ===
             elif function_name == "create_shape":
                 await miro_client.create_shape(**arguments)
+                execution_result = f"Shape with text '{arguments.get('text')}' created successfully."
             elif function_name == "delete_shape":
-                result = await miro_client.delete_shape(**arguments)
-                await message.answer(result)
+                execution_result = await miro_client.delete_shape(**arguments)
+                await message.answer(execution_result)
             elif function_name == "update_shape":
                 f_text = arguments.pop("find_text", "")
                 f_color = arguments.pop("find_color", "")
-                result = await miro_client.update_shape(find_text=f_text, find_color=f_color, **arguments)
-                await message.answer(result)
+                execution_result = await miro_client.update_shape(find_text=f_text, find_color=f_color, **arguments)
+                await message.answer(execution_result)
                 
             elif function_name == "create_sticker":
                 await miro_client.create_sticker(**arguments)
+                execution_result = f"Sticker with text '{arguments.get('text')}' created successfully."
             elif function_name == "delete_sticker":
-                result = await miro_client.delete_sticker(**arguments)
-                await message.answer(result)
+                execution_result = await miro_client.delete_sticker(**arguments)
+                await message.answer(execution_result)
             elif function_name == "update_sticker":
                 f_text = arguments.pop("find_text", "")
                 f_color = arguments.pop("find_color", "")
-                result = await miro_client.update_sticker(find_text=f_text, find_color=f_color, **arguments)
-                await message.answer(result)
+                execution_result = await miro_client.update_sticker(find_text=f_text, find_color=f_color, **arguments)
+                await message.answer(execution_result)
                 
             elif function_name == "create_zone":
                 await miro_client.create_zone(**arguments)
+                execution_result = f"Zone '{arguments.get('zone_name')}' created successfully."
             elif function_name == "delete_zone":
-                result = await miro_client.delete_zone(**arguments)
-                await message.answer(result)
+                execution_result = await miro_client.delete_zone(**arguments)
+                await message.answer(execution_result)
             elif function_name == "copy_zone":
-                result = await miro_client.copy_zone(**arguments)
-                await message.answer(result)
+                execution_result = await miro_client.copy_zone(**arguments)
+                await message.answer(execution_result)
+                
             elif function_name == "get_board_elements":
                 target_zone_name = arguments.get("zone_name")
                 target_type = arguments.get("element_type")

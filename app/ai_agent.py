@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Literal, Optional
 import openai
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
@@ -91,18 +91,9 @@ class SetActiveZoneSchema(BaseModel):
         )
     )
 
-from pydantic import BaseModel, Field
-
 class GetBoardElementsSchema(BaseModel):
-     """Schema for getting elements from the Miro board with optional filters."""
-    zone_name: Optional[str] = Field(
-        default=None,
-        description="The name of the specific frame (zone) to look inside. If not provided, inspects the whole canvas."
-    )
-    element_type: Optional[Literal["sticker", "shape", "frame"]] = Field(
-        default=None,
-        description="Filter by a specific Miro element type. Use 'sticker' for sticky notes, 'shape' for geometric shapes, and 'frame' for zones/frames."
-    )
+    zone_name: Optional[str] = Field(default=None, description="The name of the specific frame (zone) to look inside. If not provided, inspects the whole canvas.")
+    element_type: Optional[Literal["sticker", "shape", "frame"]] = Field(default=None,description="Filter by a specific Miro element type. Use 'sticker' for sticky notes, 'shape' for geometric shapes, and 'frame' for zones/frames.")
 
 # =====================================================================
 # Ai agent logic
@@ -130,7 +121,7 @@ class AIAgent:
             openai.pydantic_function_tool(model=CreateZoneSchema, name="create_zone", description="Creates a named frame (working zone)."),
             openai.pydantic_function_tool(model=DeleteZoneSchema, name="delete_zone", description="Deletes an entire frame by name."),
             openai.pydantic_function_tool(model=CopyZoneSchema, name="copy_zone", description="Duplicates a frame along with all content inside it."),
-            openai.pydantic_function_tool(model=SetActiveZoneSchema, name="set_active_zone", description="Switches the current active working zone (frame) focus or resets it completely.")
+            openai.pydantic_function_tool(model=SetActiveZoneSchema, name="set_active_zone", description="Switches the current active working zone (frame) focus or resets it completely."),
         
             openai.pydantic_function_tool(model=GetBoardElementsSchema, name="get_board_elements", description="Use this tool to read, count, or inspect existing elements (stickers, shapes, frames) on the board. You can filter by 'zone_name' to look inside a specific frame, and/or by 'element_type' to search only for specific objects like frames or sticky notes.")
 
@@ -164,13 +155,10 @@ class AIAgent:
 
         response = await self.client.chat.completions.create(
             model=config.OPENAI_MODEL,
-            messages=[
-                {"role": "system", "content": system_instruction},
-                {"role": "user", "content": user_text}
-            ],
+            messages=messages,
             tools=self._get_tools()
         )
-        return response.choices[0].message
+        return messages, response.choices[0].message
 
     async def get_final_answer(self, messages: list):
         """Final answer"""
