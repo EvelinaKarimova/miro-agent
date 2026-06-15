@@ -80,9 +80,6 @@ async def handle_user_prompt(message: types.Message):
         return
 
     await message.answer(f"Executing {len(ai_response.tool_calls)} action(s)...")
-    
-    # Functions results to return to the agent
-    tool_outputs = []
 
     # Saving response to history 
     messages.append(ai_response)
@@ -107,23 +104,46 @@ async def handle_user_prompt(message: types.Message):
                 else:
                     # Fetch frames from Miro to resolve physical board coordinates
                     all_items = await miro_client.get_all_items()
-                    found = False
+                    found_item = None
+                    
+                    # Checking for name strictly
                     for item in all_items:
-                        if item.get("type") == "frame" and item.get("data", {}).get("title", "").lower() == target_zone.lower():
-                            zone_data = {
-                                "name": item["data"]["title"],
-                                "x": item["position"]["x"],
-                                "y": item["position"]["y"]
-                            }
-                            CURRENT_CONTEXT["active_zone"] = zone_data
-                            save_active_zone(zone_data)
-                            await message.answer(f"Active zone successfully switched to <b>'{item['data']['title']}'</b>.")
-                            execution_result = f"Successfully switched to zone {item['data']['title']}"
-                            found = True
-                            break
-                    if not found:
-                        await message.answer(f"AI requested to switch to zone '{target_zone}', but no such frame exists on the Miro board.")
+                        if item.get("type") == "frame":
+                            title = item.get("data", {}).get("title", "")
+                            if title.lower() == target_zone.lower():
+                                found_item = item
+                                break
+                    
+                    # Checking substrings
+                    if not found_item:
+                        for item in all_items:
+                            if item.get("type") == "frame":
+                                title = item.get("data", {}).get("title", "")
+                                if target_zone.lower() in title.lower() or title.lower() in target_zone.lower():
+                                    found_item = item
+                                    break
+                                    
+                    if found_item:
+                        zone_data = {
+                            "name": found_item["data"]["title"],
+                            "x": found_item["position"]["x"],
+                            "y": found_item["position"]["y"]
+                        }
+                        CURRENT_CONTEXT["active_zone"] = zone_data
+                        save_active_zone(zone_data)
+                        await message.answer(f"Active zone successfully switched to <b>'{found_item['data']['title']}'</b>.")
+                        execution_result = f"Successfully switched to zone {found_item['data']['title']}"
+                    else:
+                        await message.answer(f"AI requested to switch to zone '{target_zone}', but no matching frame exists on the Miro board.")
                         execution_result = f"Error: Zone '{target_zone}' not found on the board."
+                        
+            elif function_name == "inspect_frame_geometry":
+                frame_name = arguments.get("frame_name")
+                geo_data = await miro_client.get_frame_geometry_and_contents(frame_name)
+                if geo_data:
+                    execution_result = json.dumps(geo_data, ensure_ascii=False)
+                else:
+                    execution_result = f"Error: Frame '{frame_name}' was not found on the board."
 
             # === Native Miro Canvas Element Modifications tools ===
             elif function_name == "create_shape":
@@ -172,6 +192,8 @@ async def handle_user_prompt(message: types.Message):
                 # Getting all the board items
                 raw_items = await miro_client.get_all_items()
                 
+                non_frame_items = [i for i in raw_items if i.get("type") != "frame"]
+                
                 # If the frame is set then scanning it
                 target_frame = None
                 if target_zone_name:
@@ -209,7 +231,16 @@ async def handle_user_prompt(message: types.Message):
                         if target_frame and item.get("id") == target_frame.get("id"):
                             continue
                             
+                        # Collecting text from widgets
                         item_text = item.get("data", {}).get("content", item.get("data", {}).get("title", ""))
+                        
+                        if not item_text and "fields" in item.get("data", {}):
+                            fields_data = [str(f.get("value", "")) for f in item["data"]["fields"] if f.get("value")]
+                            item_text = " | ".join(fields_data)
+                        
+                        if not item_text and "text" in item.get("data", {}):
+                            item_text = item["data"].get("text", "")
+
                         pos = item.get("position", {})
                         i_x = pos.get("x", 0)
                         i_y = pos.get("y", 0)
@@ -219,7 +250,33 @@ async def handle_user_prompt(message: types.Message):
                             is_inside = (left_bound <= i_x <= right_bound) and (top_bound <= i_y <= bottom_bound)
                             if not is_inside:
                                 continue
-                        
+                        # If the object is a frame then collect digest from inner objects
+                        if item_type == "frame":
+                            f_w = item.get("geometry", {}).get("width", 0) or item.get("size", {}).get("width", 400)
+                            f_h = item.get("geometry", {}).get("height", 0) or item.get("size", {}).get("height", 400)
+                            
+                            f_left = i_x - (f_w / 2)
+                            f_right = i_x + (f_w / 2)
+                            f_top = i_y - (f_h / 2)
+                            f_bottom = i_y + (f_h / 2)
+                            
+                            inner_contents = []
+                            for sub_item in non_frame_items:
+                                s_x = sub_item.get("position", {}).get("x", 0)
+                                s_y = sub_item.get("position", {}).get("y", 0)
+                                if f_left <= s_x <= f_right and f_top <= s_y <= f_bottom:
+                                    sub_text = sub_item.get("data", {}).get("content", sub_item.get("data", {}).get("title", ""))
+                                    if not sub_text and "fields" in sub_item.get("data", {}):
+                                        sub_text = " | ".join([str(f.get("value", "")) for f in sub_item["data"]["fields"] if f.get("value")])
+                                    if sub_text:
+                                        inner_contents.append(sub_text[:40]) 
+                            
+                            if inner_contents:
+                                item_text = f"{item_text} [Sub-contents: {', '.join(inner_contents[:5])}]"
+
+                        if not item_text or item_text.strip() == "|":
+                            continue
+
                         cleaned_items.append({
                             "id": item.get("id"),
                             "type": item_type,
@@ -230,6 +287,7 @@ async def handle_user_prompt(message: types.Message):
                     
                     execution_result = json.dumps(cleaned_items, ensure_ascii=False)
         except Exception as e:
+            execution_result = f"Error executing {function_name}: {str(e)}"
             await message.answer(f"Error executing {function_name}: {str(e)}")
 
         messages.append({

@@ -3,6 +3,8 @@ import openai
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 import config
+import datetime
+
 
 # =====================================================================
 # Shapes contracts (Customizable sizes, text, borders)
@@ -29,6 +31,9 @@ class UpdateShapeSchema(BaseModel):
     new_height: Optional[int] = Field(default=None, description="New height in pixels.")
     new_x: Optional[int] = Field(default=None, description="New X coordinate.")
     new_y: Optional[int] = Field(default=None, description="New Y coordinate.")
+
+class InspectFrameGeometrySchema(BaseModel):
+    frame_name: str = Field(description="The name of the frame to inspect its dimensions and object positions for layout planning.")
 
 
 # =====================================================================
@@ -93,7 +98,12 @@ class SetActiveZoneSchema(BaseModel):
 
 class GetBoardElementsSchema(BaseModel):
     zone_name: Optional[str] = Field(default=None, description="The name of the specific frame (zone) to look inside. If not provided, inspects the whole canvas.")
-    element_type: Optional[Literal["sticker", "shape", "frame"]] = Field(default=None,description="Filter by a specific Miro element type. Use 'sticker' for sticky notes, 'shape' for geometric shapes, and 'frame' for zones/frames.")
+    element_type: Optional[Literal["sticker", "shape", "frame"]] = Field(
+        default=None, 
+        description="CRITICAL: Leave this field EMPTY (None) if you want to scan the whole board or see all object types together. ONLY fill this if the user explicitly asked for ONE specific type."
+    )
+
+GetBoardElementsSchema.model_rebuild()
 
 # =====================================================================
 # Ai agent logic
@@ -112,7 +122,7 @@ class AIAgent:
             openai.pydantic_function_tool(model=DeleteShapeSchema, name="delete_shape", description="Deletes shapes based on text or HEX colors."),
             openai.pydantic_function_tool(model=UpdateShapeSchema, name="update_shape", description="Modifies coordinates, text, custom dimensions, or HEX colors of shapes."),
             
-           # Sticky notes
+            # Sticky notes
             openai.pydantic_function_tool(model=CreateStickerSchema, name="create_sticker", description="Creates a classic Miro sticky note using standard system color palettes and fixed square/rectangle ratios."),
             openai.pydantic_function_tool(model=DeleteStickerSchema, name="delete_sticker", description="Deletes classic sticky notes by text or Miro system color names."),
             openai.pydantic_function_tool(model=UpdateStickerSchema, name="update_sticker", description="Modifies content, positioning, or standard system colors of classic sticky notes."),
@@ -122,21 +132,39 @@ class AIAgent:
             openai.pydantic_function_tool(model=DeleteZoneSchema, name="delete_zone", description="Deletes an entire frame by name."),
             openai.pydantic_function_tool(model=CopyZoneSchema, name="copy_zone", description="Duplicates a frame along with all content inside it."),
             openai.pydantic_function_tool(model=SetActiveZoneSchema, name="set_active_zone", description="Switches the current active working zone (frame) focus or resets it completely."),
-        
-            openai.pydantic_function_tool(model=GetBoardElementsSchema, name="get_board_elements", description="Use this tool to read, count, or inspect existing elements (stickers, shapes, frames) on the board. You can filter by 'zone_name' to look inside a specific frame, and/or by 'element_type' to search only for specific objects like frames or sticky notes.")
+            
+            # Inspection & Layout mapping
+            openai.pydantic_function_tool(model=GetBoardElementsSchema, name="get_board_elements", description="Use this tool to read, count, or inspect existing elements (stickers, shapes, frames) on the board. You can filter by 'zone_name' to look inside a specific frame, and/or by 'element_type' to search only for specific objects like frames or sticky notes."),       
+            openai.pydantic_function_tool(model=InspectFrameGeometrySchema, name="inspect_frame_geometry", description="Use this tool to get exact frame boundaries and coordinates of all items inside it before choosing coordinates for new items.")
 
-         ]
+        ]
 
     async def process_message(self, user_text: str, active_zone: dict = None):
+        # What is the date today
+        current_date_str = datetime.date.today().strftime("%d.%m.%Y")
+        current_weekday = datetime.date.today().strftime("%A")
+
         system_instruction = (
-            "You are an intelligent Miro board administrator. Your goal is to manage the board canvas, "
-            "keeping the layout neat, structured, and visually appealing. Analyze the user's prompt "
-            "and invoke the necessary tools. You can call tools for single or mass/batch operations. "
-            "You are allowed to call multiple tools sequentially or simultaneously. "
-            "If the user is just chatting and doesn't require any board modification, respond with plain text."
-            "Carefully choose whether to use 'shapes' or 'sticky notes' based on user intent. If the user explicitly asks for classic 'stickers'"
-            "or implies fixed post-it notes, use sticky tools. If they mention banners, blocks, arbitrary dimensions, "
-            "or customizable boxes, use shape tools. Keep layouts organized and adjust positioning relative to active zones if provided."
+            "You are an intelligent Miro board administrator with flawless spatial awareness, geometric reasoning, and semantic understanding.\n\n"
+            "Use this baseline to dynamically parse any relative time constraints, dates, or deadlines from user prompts.\n\n"
+            f"CURRENT TEMPORAL CONTEXT: Today is {current_weekday}, {current_date_str}.\n"
+            "SEMANTIC MATCHING & SEARCH RULES:\n"
+            "- Canvas elements and working zones may have implicit meaning derived entirely from their content rather than literal titles. "
+            "When the user references a specific domain, project view, or functional area (such as a backlog, timeline, or roadmap), "
+            "always invoke 'get_board_elements' to extract the complete canvas hierarchy first.\n"
+            "- Analyze the inner contents, text values, statuses, and structure of elements residing inside each zone. "
+            "Match the user's high-level intent with the most logically relevant frame or object cluster based on context. "
+            "Proceed with execution immediately once a strong semantic association is discovered, avoiding unnecessary clarification requests.\n\n"
+            "SPATIAL LAYOUT & OBJECT POSITIONING RULES:\n"
+            "- Before placing, aligning, or mass-arranging elements inside any existing frame or area, ALWAYS invoke 'inspect_frame_geometry' to acquire its exact physical boundaries and a map of occupied space.\n"
+            "- Treat the frame as a bounded coordinate bounding box. Calculate coordinates (X, Y) for new elements dynamically so they are distributed logically, evenly, and fit entirely within the frame's left/right/top/bottom boundaries.\n"
+            "- Always factor in the sizes of new and existing objects. Never allow elements to overlap, stack directly on top of each other, or collide, unless explicitly requested.\n"
+            "- Adapt the structure layout natively to the user's implicit intent: analyze the structural pattern of existing elements and naturally continue or complete the pattern using clean grid math.\n\n"
+            "UNIVERSAL TOOL ROUTING:\n"
+            "- READ/INSPECT: For all information retrieval, search, date filtering, counting, or presence verification, use a SINGLE call to 'get_board_elements' with 'element_type' left empty to fetch everything at once.\n"
+            "- CONTEXT/ATTENTION: To lock, clear, or shift your active working focus to a specific canvas area, use 'set_active_zone'.\n"
+            "- MUTATIONS: For state-changing operations, invoke the precise create/delete/update tool required.\n\n"
+            "Operational guidelines: Rely strictly on tool outputs as your source of truth. Do not invent coordinates or make assumptions about the board layout."
         )
         
         if active_zone:
@@ -144,8 +172,6 @@ class AIAgent:
                 f"\n\nCRITICAL CONTEXT: Active frame '{active_zone['name']}' center is X: {active_zone['x']}, Y: {active_zone['y']}. "
                 f"Calculate new elements coordinates relative to this zone."
             )
-
-        print(f"DEBUG: Отправка запроса на URL: {self.client.base_url}")
 
         # Creating messages array
         messages = [
@@ -159,6 +185,7 @@ class AIAgent:
             tools=self._get_tools()
         )
         return messages, response.choices[0].message
+
 
     async def get_final_answer(self, messages: list):
         """Final answer"""

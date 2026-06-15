@@ -7,6 +7,7 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 MIRO_ACCESS_TOKEN = os.getenv("MIRO_ACCESS_TOKEN")
 MIRO_BOARD_ID = os.getenv("MIRO_BOARD_ID")
+MIRO_API_ENDPOINT = os.getenv("MIRO_API_ENDPOINT")
 
 # Read the allowed users string and parse it into a list of integers
 allowed_users_raw = os.getenv("ALLOWED_USERS", "")

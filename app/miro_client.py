@@ -3,7 +3,7 @@ import config
 
 class MiroClient:
     def __init__(self):
-        self.base_url = "https://api.miro.com/v1"
+        self.base_url = config.MIRO_API_ENDPOINT
         self.board_id = config.MIRO_BOARD_ID
         self.headers = {
             "Authorization": f"Bearer {config.MIRO_ACCESS_TOKEN}",
@@ -15,7 +15,7 @@ class MiroClient:
 # Service methods
 # =====================================================================
     async def get_all_items(self) -> list:
-        url = f"{self.base_url}/boards/{self.board_id}/widgets"
+        url = f"{self.base_url}/boards/{self.board_id}/items?limit=50"
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=self.headers)
             if response.status_code != 200:
@@ -48,7 +48,7 @@ class MiroClient:
         return matched_items
 
     async def _delete_item_by_id(self, item_id: str) -> bool:
-        url = f"{self.base_url}/boards/{self.board_id}/widgets/{item_id}"
+        url = f"{self.base_url}/boards/{self.board_id}/items/{item_id}"
         async with httpx.AsyncClient() as client:
             response = await client.delete(url, headers=self.headers)
             return response.status_code == 204
@@ -57,16 +57,20 @@ class MiroClient:
 # Shapes operations
 # =====================================================================
     async def create_shape(self, text: str, color: str, font_color: str, x: int, y: int, width: int, height: int) -> dict:
-        url = f"{self.base_url}/boards/{self.board_id}/widgets"
+        url = f"{self.base_url}/boards/{self.board_id}/items"
         payload = {
+            "type": "shape",
             "data": {"content": text, "shape": "rectangle"},
-            "style": {"fillColor": color, "borderColor": color, "borderWidth": "2.0"},
+            "style": {"fillColor": color, "borderColor": color, "borderWidth": 2.0, "textColor": font_color},
             "position": {"x": x, "y": y, "origin": "center"},
             "geometry": {"width": width, "height": height}
         }
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=self.headers, json=payload)
-            return response.json() if response.status_code == 201 else {}
+            if response.status_code != 201:
+                print(f"Miro Error (create_shape): {response.status_code} - {response.text}")
+                return {}
+            return response.json()
 
     async def delete_shape(self, text_query: str = "", color_query: str = "") -> str:
         shapes = await self._find_items_by_query("shape", text_query, color_query)
@@ -87,7 +91,7 @@ class MiroClient:
         updated_count = 0
         async with httpx.AsyncClient() as client:
             for shape in shapes:
-                url = f"{self.base_url}/boards/{self.board_id}/widgets/{shape['id']}"
+                url = f"{self.base_url}/boards/{self.board_id}/items/{shape['id']}"
                 payload = {"data": {}, "style": {}, "position": {}, "geometry": {}}
                 
                 if kwargs.get("new_text") is not None:
@@ -117,15 +121,19 @@ class MiroClient:
 # Sticky notes operations
 # =====================================================================
     async def create_sticker(self, text: str, color: str, x: int, y: int, shape: str) -> dict:
-        url = f"{self.base_url}/boards/{self.board_id}/widgets"
+        url = f"{self.base_url}/boards/{self.board_id}/items"
         payload = {
+            "type": "sticky_note",
             "data": {"content": text, "shape": shape},
             "style": {"fillColor": color},
             "position": {"x": x, "y": y, "origin": "center"}
         }
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=self.headers, json=payload)
-            return response.json() if response.status_code == 201 else {}
+            if response.status_code != 201:
+                print(f"Miro Error (create_sticker): {response.status_code} - {response.text}")
+                return {}
+            return response.json()
 
     async def delete_sticker(self, text_query: str = "", color_query: str = "") -> str:
         stickers = await self._find_items_by_query("sticky_note", text_query, color_query)
@@ -146,7 +154,7 @@ class MiroClient:
         updated_count = 0
         async with httpx.AsyncClient() as client:
             for sticker in stickers:
-                url = f"{self.base_url}/boards/{self.board_id}/widgets/{sticker['id']}"
+                url = f"{self.base_url}/boards/{self.board_id}/items/{sticker['id']}"
                 payload = {"data": {}, "style": {}, "position": {}}
                 
                 if kwargs.get("new_text") is not None:
@@ -173,15 +181,19 @@ class MiroClient:
 # Zone\Frame operations
 # =====================================================================
     async def create_zone(self, zone_name: str, x: int, y: int, width: int, height: int) -> dict:
-        url = f"{self.base_url}/boards/{self.board_id}/widgets"
+        url = f"{self.base_url}/boards/{self.board_id}/items"
         payload = {
+            "type": "frame",
             "data": {"title": zone_name},
             "position": {"x": x, "y": y},
             "geometry": {"width": width, "height": height}
         }
         async with httpx.AsyncClient() as client:
             response = await client.post(url, headers=self.headers, json=payload)
-            return response.json() if response.status_code == 201 else {}
+            if response.status_code != 201:
+                print(f"Miro Error (create_zone): {response.status_code} - {response.text}")
+                return {}
+            return response.json()
 
     async def delete_zone(self, zone_name: str) -> str:
         all_items = await self.get_all_items()
@@ -205,8 +217,8 @@ class MiroClient:
 
         src_x = source_frame["position"]["x"]
         src_y = source_frame["position"]["y"]
-        src_w = source_frame["geometry"]["width"]
-        src_h = source_frame["geometry"]["height"]
+        src_w = source_frame.get("geometry", {}).get("width", 0) or source_frame.get("size", {}).get("width", 800)
+        src_h = source_frame.get("geometry", {}).get("height", 0) or source_frame.get("size", {}).get("height", 600)
 
         offset_x = src_w + 200
         new_x = src_x + offset_x
@@ -226,7 +238,7 @@ class MiroClient:
         for item in all_items:
             if item.get("type") not in ["shape", "sticky_note"]:
                 continue
-                
+            
             item_x = item["position"]["x"]
             item_y = item["position"]["y"]
 
@@ -243,8 +255,8 @@ class MiroClient:
                         font_color=item["style"].get("textColor", "#000000"),
                         x=target_x, 
                         y=target_y,
-                        width=item["geometry"].get("width", 100),
-                        height=item["geometry"].get("height", 100)
+                        width=item.get("geometry", {}).get("width", 100),
+                        height=item.get("geometry", {}).get("height", 100)
                     )
                 elif item["type"] == "sticky_note":
                     await self.create_sticker(
@@ -254,6 +266,48 @@ class MiroClient:
                         y=target_y,
                         shape=item["data"].get("shape", "square")
                     )
-                copied_elements_count += 1
-
+                    copied_elements_count += 1
         return f"Zone '{source_zone_name}' successfully duplicated into '{new_zone_name}' with {copied_elements_count} items."
+
+    async def get_frame_geometry_and_contents(self, frame_title: str) -> dict:
+        all_items = await self.get_all_items()
+        target_frame = None
+        
+        for item in all_items:
+            if item.get("type") == "frame" and item.get("data", {}).get("title", "").lower() == frame_title.lower():
+                target_frame = item
+                break
+                
+        if not target_frame:
+            return {}
+            
+        f_x = target_frame["position"]["x"]
+        f_y = target_frame["position"]["y"]
+        f_w = target_frame.get("geometry", {}).get("width", 0) or target_frame.get("size", {}).get("width", 800)
+        f_h = target_frame.get("geometry", {}).get("height", 0) or target_frame.get("size", {}).get("height", 600)
+        
+        left = f_x - (f_w / 2)
+        right = f_x + (f_w / 2)
+        top = f_y - (f_h / 2)
+        bottom = f_y + (f_h / 2)
+        
+        inner_elements = []
+        for item in all_items:
+            if item.get("id") == target_frame["id"]:
+                continue
+            i_x = item.get("position", {}).get("x", 0)
+            i_y = item.get("position", {}).get("y", 0)
+            
+            if left <= i_x <= right and top <= i_y <= bottom:
+                inner_elements.append({
+                    "type": item.get("type"),
+                    "text": item.get("data", {}).get("content", item.get("data", {}).get("title", "")),
+                    "x": i_x,
+                    "y": i_y
+                })
+                
+        return {
+            "frame_coords": {"x": f_x, "y": f_y, "width": f_w, "height": f_h},
+            "bounds": {"left": left, "right": right, "top": top, "bottom": bottom},
+            "existing_elements": inner_elements
+        }
