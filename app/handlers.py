@@ -364,19 +364,3 @@ async def handle_user_prompt(message: types.Message):
 
     final_response = await ai_agent.get_final_answer(messages)
     await message.answer(final_response.content)
-
-
-    messages.append({
-        "role": "tool",
-        "tool_call_id": tool_call.id,
-        "name": function_name,
-        "content": execution_result
-    })
-
-    await message.answer("Done! Sending results back to AI...")
-
-    # Sending function execution result to the agent
-    final_response = await ai_agent.get_final_answer(messages)
-    
-    # Answer to the user
-    await message.answer(final_response.content)
