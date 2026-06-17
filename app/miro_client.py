@@ -46,12 +46,15 @@ class MiroClient:
                     matched_items.append(item)
                     
         return matched_items
-
-    async def _delete_item_by_id(self, item_id: str) -> bool:
-        url = f"{self.base_url}/boards/{self.board_id}/items/{item_id}"
+        
+    async def _delete_item_by_id(self, item_id: str, item_type: str) -> bool:
+        api_type = "sticky_notes" if item_type == "sticky_note" else f"{item_type}s"
+        url = f"{self.base_url}/boards/{self.board_id}/{api_type}/{item_id}"
+        
         async with httpx.AsyncClient() as client:
             response = await client.delete(url, headers=self.headers)
             return response.status_code == 204
+
 
 # =====================================================================
 # Shapes operations
@@ -78,9 +81,11 @@ class MiroClient:
             return "No matching shapes found to delete."
         
         deleted_count = 0
+        
         for shape in shapes:
-            if await self._delete_item_by_id(shape["id"]):
+            if await self._delete_item_by_id(shape["id"], "shape"):
                 deleted_count += 1
+
         return f"Successfully deleted {deleted_count} shape(s)."
 
     async def update_shape(self, find_text: str = "", find_color: str = "", **kwargs) -> str:
@@ -141,9 +146,11 @@ class MiroClient:
             return "No matching sticky notes found to delete."
         
         deleted_count = 0
+        
         for sticker in stickers:
-            if await self._delete_item_by_id(sticker["id"]):
+            if await self._delete_item_by_id(sticker["id"], "sticky_note"):
                 deleted_count += 1
+                
         return f"Successfully deleted {deleted_count} sticky note(s)."
 
     async def update_sticker(self, find_text: str = "", find_color: str = "", **kwargs) -> str:
@@ -199,7 +206,7 @@ class MiroClient:
         all_items = await self.get_all_items()
         for item in all_items:
             if item.get("type") == "frame" and item.get("data", {}).get("title", "").lower() == zone_name.lower():
-                if await self._delete_item_by_id(item["id"]):
+                if await self._delete_item_by_id(item["id"], "frame"):
                     return f"Zone '{zone_name}' successfully deleted."
         return f"Zone '{zone_name}' not found."
 

@@ -75,7 +75,10 @@ async def handle_user_prompt(message: types.Message):
 
     # If the LLM chooses to chat back with text instead of calling API tools
     if not ai_response.tool_calls:
-        await thinking_msg.delete()
+        try:
+            await thinking_msg.delete()
+        except Exception:
+            pass
         await message.answer(ai_response.content)
         return
 
@@ -108,7 +111,7 @@ async def handle_user_prompt(message: types.Message):
                     
                     # Checking for name strictly
                     for item in all_items:
-                        if item.get("type") == "frame":
+                        if isinstance(item, dict) and item.get("type") == "frame":
                             title = item.get("data", {}).get("title", "")
                             if title.lower() == target_zone.lower():
                                 found_item = item
@@ -117,7 +120,7 @@ async def handle_user_prompt(message: types.Message):
                     # Checking substrings
                     if not found_item:
                         for item in all_items:
-                            if item.get("type") == "frame":
+                            if isinstance(item, dict) and item.get("type") == "frame":
                                 title = item.get("data", {}).get("title", "")
                                 if target_zone.lower() in title.lower() or title.lower() in target_zone.lower():
                                     found_item = item
@@ -192,34 +195,47 @@ async def handle_user_prompt(message: types.Message):
                 # Getting all the board items
                 raw_items = await miro_client.get_all_items()
                 
-                non_frame_items = [i for i in raw_items if i.get("type") != "frame"]
+                non_frame_items = []
+                if isinstance(raw_items, list):
+                    non_frame_items = [i for i in raw_items if isinstance(i, dict) and i.get("type") != "frame"]
+                else:
+                    raw_items = []
                 
                 # If the frame is set then scanning it
                 target_frame = None
                 if target_zone_name:
                     for item in raw_items:
-                        if item.get("type") == "frame" and item.get("data", {}).get("title", "").lower() == target_zone_name.lower():
+                        if isinstance(item, dict) and item.get("type") == "frame" and item.get("data", {}).get("title", "").lower() == target_zone_name.lower():
+
                             target_frame = item
                             break
                 
                 cleaned_items = []
-                
                 if target_zone_name and not target_frame:
                     execution_result = f"Error: Zone '{target_zone_name}' was not found on the board."
                 else:
+                    if target_zone_name and not target_frame:
+                        execution_result = f"Error: Zone '{target_zone_name}' was not found on the board."
+                    else:
                     # Calculating frame borders
-                    if target_frame:
-                        f_x = target_frame["position"]["x"]
-                        f_y = target_frame["position"]["y"]
-                        f_w = target_frame.get("geometry", {}).get("width", 0) or target_frame.get("size", {}).get("width", 400)
-                        f_h = target_frame.get("geometry", {}).get("height", 0) or target_frame.get("size", {}).get("height", 400)
-                        
-                        left_bound = f_x - (f_w / 2)
-                        right_bound = f_x + (f_w / 2)
-                        top_bound = f_y - (f_h / 2)
-                        bottom_bound = f_y + (f_h / 2)
+                        left_bound, right_bound, top_bound, bottom_bound = 0, 0, 0, 0
+                        if target_frame:
+                            f_pos = target_frame.get("position", {})
+                            f_x = f_pos.get("x", 0) if isinstance(f_pos, dict) else 0
+                            f_y = f_pos.get("y", 0) if isinstance(f_pos, dict) else 0
+
+                            f_w = target_frame.get("geometry", {}).get("width", 0) or target_frame.get("size", {}).get("width", 400)
+                            f_h = target_frame.get("geometry", {}).get("height", 0) or target_frame.get("size", {}).get("height", 400)
+
+                            left_bound = f_x - (f_w / 2)
+                            right_bound = f_x + (f_w / 2)
+                            top_bound = f_y - (f_h / 2)
+                            bottom_bound = f_y + (f_h / 2)
 
                     for item in raw_items:
+                        if not isinstance(item, dict):
+                            continue
+
                         item_type = item.get("type", "unknown")
                         
                         # Filter by target type
@@ -231,17 +247,45 @@ async def handle_user_prompt(message: types.Message):
                         if target_frame and item.get("id") == target_frame.get("id"):
                             continue
                             
+                        item_data = item.get("data", {})
+                        if not isinstance(item_data, dict):
+                            item_data = {}
+                            
                         # Collecting text from widgets
-                        item_text = item.get("data", {}).get("content", item.get("data", {}).get("title", ""))
+                        item_text = item_data.get("content", item_data.get("title", ""))
+                        
                         
                         if not item_text and "fields" in item.get("data", {}):
                             fields_data = [str(f.get("value", "")) for f in item["data"]["fields"] if f.get("value")]
                             item_text = " | ".join(fields_data)
                         
-                        if not item_text and "text" in item.get("data", {}):
-                            item_text = item["data"].get("text", "")
+                        if not item_text and "text" in item_data:
+                            item_text = item_data.get("text", "")
+
+                        # === TIMELINE / GANTT PARSER ===
+                        if item_type in ["timeline", "gantt_chart", "kanban"] or "records" in item_data:
+                            records = item_data.get("records", [])
+                            if isinstance(records, list):
+                                timeline_tasks = []
+                                for rec in records:
+                                    if isinstance(rec, dict):
+                                        t_title = rec.get("title", rec.get("content", "Task"))
+                                        t_start = rec.get("start_date", rec.get("startDate", ""))
+                                        t_end = rec.get("end_date", rec.get("endDate", ""))
+                                        t_status = rec.get("status", "")
+                                        
+                                        task_info = f"[{t_title} | Сроки: {t_start} - {t_end}"
+                                        if t_status:
+                                            task_info += f" | Статус: {t_status}"
+                                        task_info += "]"
+                                        timeline_tasks.append(task_info)
+                                
+                                if timeline_tasks:
+                                    item_text = f"Timeline '{item_data.get('title', 'Roadmap')}' Tasks: " + " ; ".join(timeline_tasks)
 
                         pos = item.get("position", {})
+                        if not isinstance(pos, dict):
+                            pos = {}
                         i_x = pos.get("x", 0)
                         i_y = pos.get("y", 0)
                         
@@ -252,22 +296,36 @@ async def handle_user_prompt(message: types.Message):
                                 continue
                         # If the object is a frame then collect digest from inner objects
                         if item_type == "frame":
-                            f_w = item.get("geometry", {}).get("width", 0) or item.get("size", {}).get("width", 400)
-                            f_h = item.get("geometry", {}).get("height", 0) or item.get("size", {}).get("height", 400)
+                            frame_format = item_data.get("format", {})
+                            if not isinstance(frame_format, dict):
+                                frame_format = {}
+                            f_w = frame_format.get("width", 0) or item.get("geometry", {}).get("width", 0) or 400
+                            f_h = frame_format.get("height", 0) or item.get("geometry", {}).get("height", 0) or 400
                             
                             f_left = i_x - (f_w / 2)
                             f_right = i_x + (f_w / 2)
                             f_top = i_y - (f_h / 2)
                             f_bottom = i_y + (f_h / 2)
+
                             
                             inner_contents = []
                             for sub_item in non_frame_items:
-                                s_x = sub_item.get("position", {}).get("x", 0)
-                                s_y = sub_item.get("position", {}).get("y", 0)
+                                if not isinstance(sub_item, dict):
+                                    continue
+                                    
+                                s_pos = sub_item.get("position", {})
+                                if not isinstance(s_pos, dict):
+                                    s_pos = {}
+                                s_x = s_pos.get("x", 0)
+                                s_y = s_pos.get("y", 0)
+                                
                                 if f_left <= s_x <= f_right and f_top <= s_y <= f_bottom:
-                                    sub_text = sub_item.get("data", {}).get("content", sub_item.get("data", {}).get("title", ""))
-                                    if not sub_text and "fields" in sub_item.get("data", {}):
-                                        sub_text = " | ".join([str(f.get("value", "")) for f in sub_item["data"]["fields"] if f.get("value")])
+                                    s_data = sub_item.get("data", {})
+                                    if not isinstance(s_data, dict):
+                                        s_data = {}
+                                    sub_text = s_data.get("content", s_data.get("title", ""))
+                                    if not sub_text and "fields" in s_data and isinstance(s_data["fields"], list):
+                                        sub_text = " | ".join([str(f.get("value", "")) for f in s_data["fields"] if isinstance(f, dict) and f.get("value")])
                                     if sub_text:
                                         inner_contents.append(sub_text[:40]) 
                             
@@ -284,18 +342,36 @@ async def handle_user_prompt(message: types.Message):
                             "x": i_x,
                             "y": i_y
                         })
-                    
+                    await thinking_msg.delete()
                     execution_result = json.dumps(cleaned_items, ensure_ascii=False)
         except Exception as e:
-            execution_result = f"Error executing {function_name}: {str(e)}"
+            execution_result = json.dumps({"error": str(e)}, ensure_ascii=False)
             await message.answer(f"Error executing {function_name}: {str(e)}")
 
         messages.append({
             "role": "tool",
             "tool_call_id": tool_call.id,
             "name": function_name,
-            "content": execution_result
+            "content": str(execution_result)
         })
+
+    try:
+        await thinking_msg.delete()
+    except Exception:
+        pass
+
+    await message.answer("Done! Sending results back to AI...")
+
+    final_response = await ai_agent.get_final_answer(messages)
+    await message.answer(final_response.content)
+
+
+    messages.append({
+        "role": "tool",
+        "tool_call_id": tool_call.id,
+        "name": function_name,
+        "content": execution_result
+    })
 
     await message.answer("Done! Sending results back to AI...")
 

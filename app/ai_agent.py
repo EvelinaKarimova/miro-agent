@@ -3,7 +3,7 @@ import openai
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 import config
-import datetime
+from datetime import date
 
 
 # =====================================================================
@@ -104,6 +104,8 @@ class GetBoardElementsSchema(BaseModel):
     )
 
 GetBoardElementsSchema.model_rebuild()
+InspectFrameGeometrySchema.model_rebuild()
+
 
 # =====================================================================
 # Ai agent logic
@@ -141,8 +143,8 @@ class AIAgent:
 
     async def process_message(self, user_text: str, active_zone: dict = None):
         # What is the date today
-        current_date_str = datetime.date.today().strftime("%d.%m.%Y")
-        current_weekday = datetime.date.today().strftime("%A")
+        current_date_str = date.today().strftime("%d.%m.%Y")
+        current_weekday = date.today().strftime("%A")
 
         system_instruction = (
             "You are an intelligent Miro board administrator with flawless spatial awareness, geometric reasoning, and semantic understanding.\n\n"
